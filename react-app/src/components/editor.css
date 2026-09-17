@@ -1,0 +1,19 @@
+.editor-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #0b0f19; }
+.editor-toolbar { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; padding: 1rem; border-bottom: 1px solid rgb(255 255 255 / .08); }
+.toolbar-spacer { flex: 1; }
+.editor-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.editor-canvas { flex: 1; min-width: 0; overflow: auto; padding: clamp(1rem, 4vw, 3rem); }
+.editor-title-row, .metric-row, .script-toolbar, .tag-row, .punchline-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.editor-title { flex: 1; min-width: 12rem; color: #f1f5f9; background: transparent; border: 0; outline: 0; font-size: clamp(1.5rem, 4vw, 2.5rem); font-weight: 900; }
+.editor-title-row select, .metric-row input, .tag-row input, .script-toolbar button, .ai-panel input, .ai-panel select { color: #cbd5e1; background: rgb(0 0 0 / .3); border: 1px solid rgb(255 255 255 / .12); border-radius: .6rem; padding: .6rem .75rem; }
+.tag-row button, .punchline-row span { display: inline-flex; align-items: center; gap: .35rem; color: #fb923c; background: rgb(249 115 22 / .1); border: 1px solid rgb(249 115 22 / .3); border-radius: .5rem; padding: .45rem .6rem; }
+.metric-row label { color: #94a3b8; font-size: .75rem; font-weight: 700; text-transform: uppercase; }
+.script-editor { position: relative; min-height: 22rem; }
+.script-editor textarea, .highlight-overlay { position: absolute; inset: 0; width: 100%; min-height: 22rem; padding: 1rem; box-sizing: border-box; color: #e2e8f0; background: transparent; border: 0; outline: 0; resize: vertical; font: inherit; font-size: 1.1rem; line-height: 1.7; white-space: pre-wrap; }
+.highlight-overlay { pointer-events: none; color: #e2e8f0; overflow: hidden; }
+.highlight-overlay mark { color: #fb923c; background: transparent; text-decoration: underline; font-weight: 800; }
+.ai-panel { width: min(32rem, 100%); display: flex; flex-direction: column; gap: .75rem; padding: 1rem; overflow: auto; border-left: 1px solid rgb(255 255 255 / .1); background: rgb(15 23 42 / .8); }
+.ai-panel textarea { min-height: 14rem; resize: vertical; color: #e2e8f0; background: rgb(0 0 0 / .25); border: 1px solid rgb(255 255 255 / .1); border-radius: .75rem; padding: .75rem; }
+.ai-header { display: flex; justify-content: space-between; align-items: center; color: #c084fc; }
+.ai-header button { color: #94a3b8; background: transparent; border: 0; }
+@media (max-width: 768px) { .editor-body { position: relative; } .ai-panel { position: absolute; inset: 0; z-index: 2; width: auto; } }

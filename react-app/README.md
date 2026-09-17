@@ -1,10 +1,9 @@
 # Staged React migration
 
-Phase 2 is complete:
+Phase 3 is complete:
 
-- Added `PersonaEditor` as a controlled React component.
-- Added `ExportModal` with script, notes, and punchline toggles.
-- Added shared modal/component styles.
-- Preserved the legacy app and localStorage data format.
+- Added `InlineBitEditor` with title/status editing, tags, metrics, undo/redo, punchline highlighting, AI analysis, and draft copying.
+- Added responsive editor styles and mobile AI overlay behavior.
+- Reused the shared formatting, API, and audio utilities.
 
-The components are intentionally not mounted in `App.jsx` yet. The next phase will extract and mount `InlineBitEditor`, then connect the main application state and modal callbacks.
+The next phase will mount the extracted components in the application shell and then migrate the Set Builder and import/AI modal components.
