@@ -10,7 +10,10 @@ function highlightText(text, punchlines = []) {
     const next = [];
     const regex = new RegExp(`(${escapeRegExp(punchline)})`, 'gi');
     segments.forEach((segment) => {
-      if (segment.highlighted) return next.push(segment);
+      if (segment.highlighted) {
+        next.push(segment);
+        return;
+      }
       segment.text.split(regex).forEach((part) => {
         if (!part) return;
         next.push({ text: part, highlighted: part.toLowerCase() === punchline.toLowerCase() });
@@ -131,3 +134,4 @@ export default function InlineBitEditor({
     <audio ref={audioRef} hidden />
   </section>;
 }
+
