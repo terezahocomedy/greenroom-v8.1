@@ -2,12 +2,16 @@
   "name": "greenroom-v8-react",
   "private": true,
   "version": "3.0.0",
+  "description": "Stand-up comedy set builder with AI assistance. React + Vite edition.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
+  "keywords": ["comedy", "set-builder", "ai", "gemini"],
+  "author": "terezahocomedy",
+  "license": "MIT",
   "dependencies": {
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
