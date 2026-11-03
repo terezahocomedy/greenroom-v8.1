@@ -1211,6 +1211,7 @@
             const [isSetBuilderOpen, setIsSetBuilderOpen] = useState(false); 
             const [setBuilderTagFilter, setSetBuilderTagFilter] = useState('');
             const [setBuilderSearch, setSetBuilderSearch] = useState('');
+            const [isMobileLibraryOpen, setIsMobileLibraryOpen] = useState(false);
             const [isAutoSetModalOpen, setIsAutoSetModalOpen] = useState(false);
             const [editingPersona, setEditingPersona] = useState(null);
             const [newSetModal, setNewSetModal] = useState({ isOpen: false, name: '' });
@@ -2565,9 +2566,14 @@
                                 </div>
 
                                 {/* RIGHT/BOTTOM PANEL: Bit Library Sidebar for Set Builder */}
-                                <div className="w-full md:w-[400px] lg:w-[480px] glass-panel flex flex-col shrink-0 md:border-l border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.3)] md:shadow-[-10px_0_30px_rgba(0,0,0,0.3)] z-10 h-[50vh] md:h-auto overflow-hidden">
+                                <div className={`w-full md:w-[400px] lg:w-[480px] glass-panel flex flex-col shrink-0 md:border-l border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.3)] md:shadow-[-10px_0_30px_rgba(0,0,0,0.3)] z-10 ${isMobileLibraryOpen ? 'h-[45vh]' : 'h-auto'} md:h-auto overflow-hidden transition-[height] duration-200`}>
                                     <div className="p-4 md:p-6 border-b border-white/10 bg-black/20 shrink-0">
-                                        <h3 className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3 md:mb-4 flex items-center gap-1.5 md:gap-2"><Folder size={12} className="md:w-[14px] md:h-[14px]"/> Bit Library</h3>
+                                        <button type="button" onClick={() => setIsMobileLibraryOpen(o => !o)} className={`md:hidden w-full flex items-center justify-between text-[11px] font-black text-slate-300 uppercase tracking-widest ${isMobileLibraryOpen ? 'mb-3' : ''}`}>
+                                            <span className="flex items-center gap-1.5"><Folder size={12}/> Bit Library</span>
+                                            <span className="flex items-center gap-1 text-green-400">{isMobileLibraryOpen ? 'Hide' : 'Add Bits'} {isMobileLibraryOpen ? <ChevronDown size={14}/> : <ChevronUp size={14}/>}</span>
+                                        </button>
+                                        <h3 className="hidden md:flex text-[11px] font-black text-slate-400 uppercase tracking-widest mb-4 items-center gap-2"><Folder size={14}/> Bit Library</h3>
+                                        <div className={`${isMobileLibraryOpen ? 'block' : 'hidden'} md:block`}>
                                         <div className="relative mb-3 md:mb-4">
                                             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 md:w-[16px] md:h-[16px]" />
                                             <input
@@ -2597,9 +2603,10 @@
                                                 ))}
                                             </select>
                                         </div>
+                                        </div>
                                     </div>
                                     
-                                    <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar space-y-6 md:space-y-8 bg-black/10">
+                                    <div className={`${isMobileLibraryOpen ? 'block' : 'hidden'} md:block flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar space-y-6 md:space-y-8 bg-black/10`}>
                                         {suggestedBits.length > 0 && !setBuilderSearch && !setBuilderTagFilter && (
                                             <div>
                                                 <h4 className="text-[9px] md:text-[10px] font-black text-green-400 uppercase tracking-widest mb-3 md:mb-4 flex items-center gap-1.5 md:gap-2"><Sparkles size={12} className="md:w-[14px] md:h-[14px]"/> Suggested</h4>
