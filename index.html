@@ -99,7 +99,7 @@
             }
         }
         
-        const INITIAL_TAGS = ["Opener", "Closer", "Crowd Work", "Callback", "18+", "Corporate", "English", "中文", "Canton", "Eng", "廣東話", "普通話"];
+        const INITIAL_TAGS = ["Opener", "Closer", "Crowd Work", "Callback", "18+", "Corporate", "English", "中文", "Canton", "普通話"];
         const DEFAULT_PERSONAS = [
             { id: '1', name: 'Comedy Consultant', prompt: 'You are a bilingual stand-up comedy consultant specializing in observational humor. Review my joke and make the punchline hit harder. Keep the language (English/Cantonese) consistent with the input.' },
             { id: '2', name: 'Roast Master', prompt: 'You are a savage roast comic. Review this bit and make it sharper, more aggressive, and add a killer tag at the end.' }
@@ -110,7 +110,7 @@
 
         const calculateDuration = (text) => {
             if (!text) return 0;
-            const plain = text.replace(/\*\*|__/g, '');
+            const plain = text.replace(/==/g, '');
             const words = plain.trim().split(/\s+/).filter(Boolean).length;
             return Math.round((words / WORDS_PER_MINUTE) * 10) / 10;
         };
@@ -120,26 +120,115 @@
             for (let i = 0; i < retries; i++) {
                 try {
                     const response = await fetch(url, options);
-                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    if (!response.ok) {
+                        let detail = '';
+                        try { detail = (await response.json())?.error?.message || ''; } catch (e) {}
+                        const err = new Error(`HTTP error! status: ${response.status}${detail ? ' - ' + detail : ''}`);
+                        err.status = response.status;
+                        throw err;
+                    }
                     return await response.json();
                 } catch (error) {
-                    if (i === retries - 1) throw new Error("API request failed: " + error.message);
+                    // Client errors (bad key, no access, bad request) will not succeed on retry
+                    const retryable = !error.status || error.status === 429 || error.status >= 500;
+                    if (!retryable || i === retries - 1) {
+                        let hint = '';
+                        if (error.status === 403) hint = " Check Settings: add a valid Gemini API key (AI Studio), make sure the key is not restricted to other websites/APIs, and that the Generative Language API is enabled for its project.";
+                        else if (error.status === 400 && /API key/i.test(error.message)) hint = " The API key looks invalid - re-paste it in Settings.";
+                        throw new Error("API request failed: " + error.message + hint);
+                    }
                     await new Promise(res => setTimeout(res, delays[i]));
                 }
             }
         };
 
+        // Smart tagging: aliases merge near-duplicate tags into one canonical name
+        const TAG_ALIASES = {
+            'eng': 'English', 'en': 'English', 'english': 'English',
+            '廣東話': 'Canton', '广东话': 'Canton', 'cantonese': 'Canton', 'canton': 'Canton', 'cantonese lang': 'Canton',
+            '普通話': '普通話', '普通话': '普通話', 'mandarin': '普通話', 'putonghua': '普通話',
+            '中文': '中文', 'chinese': '中文',
+            'crowdwork': 'Crowd Work', 'crowd work': 'Crowd Work', 'crowd-work': 'Crowd Work',
+            'open': 'Opener', 'opening': 'Opener', 'opener': 'Opener',
+            'close': 'Closer', 'closing': 'Closer', 'closer': 'Closer',
+            'callbacks': 'Callback', 'call back': 'Callback', 'call-back': 'Callback', 'callback': 'Callback',
+            'adult': '18+', 'adults': '18+', 'nsfw': '18+', 'r-rated': '18+', '18plus': '18+',
+            'work': 'Work', 'job': 'Work', 'office': 'Work', 'corporate': 'Corporate'
+        };
+
+        const TOPIC_KEYWORDS = {
+            'Family': ['mom', 'mother', 'dad', 'father', 'parents', 'sister', 'brother', 'grandma', 'grandpa', 'kids', 'son', 'daughter', '媽', '爸', '家人', '爺爺', '奶奶', '外婆', '兒子', '女兒', '父母'],
+            'Relationships': ['girlfriend', 'boyfriend', 'wife', 'husband', 'dating', 'date', 'marriage', 'married', 'ex', 'divorce', 'tinder', '女朋友', '男朋友', '老婆', '老公', '拍拖', '結婚', '離婚', '前任'],
+            'Work': ['boss', 'job', 'office', 'coworker', 'salary', 'meeting', 'interview', '老闆', '返工', '上班', '同事', '公司', '加班', '工資', '面試'],
+            'Money': ['money', 'rent', 'broke', 'expensive', 'cheap', 'mortgage', 'tax', 'debt', '錢', '租金', '樓價', '貴', '平', '供樓', '稅'],
+            'Food': ['food', 'eat', 'eating', 'restaurant', 'dinner', 'lunch', 'pizza', 'coffee', 'cooking', '食', '餐廳', '飯', '咖啡', '煮'],
+            'Travel': ['flight', 'airport', 'travel', 'hotel', 'vacation', 'tourist', 'plane', '機場', '旅行', '酒店', '飛機', '遊客'],
+            'Tech': ['phone', 'iphone', 'app', 'internet', 'ai', 'computer', 'wifi', 'social media', 'instagram', '手機', '電腦', '網絡', '應用程式'],
+            'School': ['school', 'teacher', 'class', 'college', 'university', 'homework', 'student', '學校', '老師', '大學', '功課', '學生'],
+            'Health': ['doctor', 'hospital', 'gym', 'diet', 'sick', 'therapy', 'weight', '醫生', '醫院', '健身', '減肥', '病'],
+            'Politics': ['government', 'politics', 'president', 'election', 'police', 'politician', '政府', '政治', '選舉', '警察']
+        };
+
+        const tagKey = (t) => {
+            const k = String(t || '').toLowerCase().replace(/^#/, '').replace(/[\s\-_]+/g, '');
+            return /^[a-z]{4,}s$/.test(k) ? k.slice(0, -1) : k;
+        };
+
+        // Returns the canonical form of a tag, reusing an existing similar tag when there is one
+        const canonicalTag = (raw, known = []) => {
+            const clean = String(raw || '').replace(/^#/, '').trim();
+            if (!clean) return '';
+            const alias = TAG_ALIASES[clean.toLowerCase()];
+            if (alias) return alias;
+            const key = tagKey(clean);
+            return known.find(k => tagKey(k) === key) || clean;
+        };
+
+        const mergeTagList = (list) => {
+            const out = [];
+            (list || []).forEach(t => { const c = canonicalTag(t, out); if (c && !out.includes(c)) out.push(c); });
+            return out;
+        };
+
+        // Dedupe/merge tags across the tag list and every bit; returns how many tags were merged away
+        const mergeSimilarTags = (tagList, bitList) => {
+            const mergedTags = mergeTagList(tagList);
+            const newBits = bitList.map(b => {
+                const bt = mergeTagList(b.tags);
+                return JSON.stringify(bt) === JSON.stringify(b.tags || []) ? b : { ...b, tags: bt };
+            });
+            newBits.forEach(b => (b.tags || []).forEach(t => { if (!mergedTags.includes(t)) mergedTags.push(t); }));
+            return { tags: mergedTags, bits: newBits, removed: Math.max(0, (tagList || []).length - mergedTags.length) };
+        };
+
+        const CANTONESE_MARKERS = /[嘅咗唔冇哋啲嘢喺咁佢嚟咩乜噉囉喇㗎]/;
+        const MANDARIN_MARKERS = /[们这么没吗呢吧还让给]|什么|不是|因为/;
+
         const detectLanguageTags = (text, existingTags = []) => {
-            const tags = new Set(existingTags);
+            const tags = new Set(mergeTagList(existingTags));
             if (!text) return Array.from(tags);
-            const hasChinese = /[\u4e00-\u9fa5]/.test(text);
-            if (hasChinese) {
+            if (/[\u4e00-\u9fa5]/.test(text)) {
                 tags.add("中文");
-                tags.add("Canton");
+                if (CANTONESE_MARKERS.test(text) || !MANDARIN_MARKERS.test(text)) tags.add("Canton");
+                else tags.add("普通話");
             } else if (/[a-zA-Z]/.test(text)) {
                 tags.add("English");
             }
             return Array.from(tags);
+        };
+
+        const suggestTopicTags = (text, currentTags = [], max = 3) => {
+            if (!text || text.trim().length < 20) return [];
+            const lower = text.toLowerCase();
+            const words = new Set(lower.match(/[a-z']+/g) || []);
+            const have = new Set(currentTags);
+            return Object.entries(TOPIC_KEYWORDS)
+                .filter(([topic]) => !have.has(topic))
+                .map(([topic, kws]) => ({ topic, score: kws.filter(k => /^[a-z' ]+$/.test(k) ? (k.includes(' ') ? lower.includes(k) : words.has(k)) : text.includes(k)).length }))
+                .filter(x => x.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, max)
+                .map(x => x.topic);
         };
 
         const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -305,6 +394,7 @@
             const [aiPanelWidth, setAiPanelWidth] = useState(window.innerWidth < 768 ? window.innerWidth : 480);
 
             const [editorTagInput, setEditorTagInput] = useState('');
+            const suggestedTags = useMemo(() => suggestTopicTags(bit.content, bit.tags || []), [bit.content, bit.tags]);
             const [showTagDropdown, setShowTagDropdown] = useState(false);
 
             useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [aiChat, isAILoading]);
@@ -336,18 +426,19 @@
             };
 
             const commitEditorTag = (tagToCommit) => {
-                const cleanTag = tagToCommit.replace(/^#/, '').trim();
+                const cleanTag = canonicalTag(tagToCommit, allTags);
                 if (!cleanTag) return;
                 if (!bit.tags.includes(cleanTag)) { onChange({...bit, tags: [...bit.tags, cleanTag]}); }
                 if (!allTags.includes(cleanTag)) { onAddTag(cleanTag); }
                 setEditorTagInput(''); setShowTagDropdown(false); playSound('pop');
             };
 
-            // Formatting is stored inline: **bold** and __underline__
+            // Highlights are stored inline as ==text== (rendered orange in Preview)
             const applyFormat = (marker) => {
                 const textarea = contentRef.current;
                 if (!textarea) return;
                 const start = textarea.selectionStart; const end = textarea.selectionEnd;
+                if (start === end && !(bit.content.substring(start - 2, start) === marker && bit.content.substring(end, end + 2) === marker)) return;
                 const val = bit.content;
                 const m = marker.length;
                 let newVal, selStart, selEnd;
@@ -366,8 +457,7 @@
             const handleEditorKeyDown = (e) => {
                 if (!(e.ctrlKey || e.metaKey)) return;
                 const k = e.key.toLowerCase();
-                if (k === 'b') { e.preventDefault(); applyFormat('**'); }
-                else if (k === 'u') { e.preventDefault(); applyFormat('__'); }
+                if (e.shiftKey && k === 'h') { e.preventDefault(); applyFormat('=='); }
             };
 
             const handleTTS = async () => {
@@ -376,14 +466,14 @@
                 setIsTTSLoading(true);
                 try {
                     const apiKey = geminiApiKey || "";
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
                     const prompt = `Read this comedy bit in a storyteller voice: ${bit.content}`;
                     const payload = { 
                         contents: [{ parts: [{ text: prompt }] }], 
                         generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } } },
                         model: "gemini-2.5-flash-preview-tts" 
                     };
-                    const res = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    const res = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-goog-api-key': apiKey } : {}) }, body: JSON.stringify(payload) });
                     const inlineData = res.candidates?.[0]?.content?.parts?.[0]?.inlineData;
                     if (!inlineData) throw new Error("No audio generated.");
                     const mimeType = inlineData.mimeType || "audio/L16; rate=24000";
@@ -420,12 +510,12 @@
                 const modelName = apiKey ? "gemini-3.5-flash" : "gemini-2.5-flash-preview-09-2025";
                 const activePersona = personas.find(p => p.id === localPersonaId) || personas[0];
                 try {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
                     const prompt = isInitial 
                         ? `${activePersona.prompt}\n\nReview this bit:\nTitle: ${bit.title}\nContent: ${bit.content}\nRespond strictly with JSON: {"rewrittenContent":"...", "notes":"..."}`
                         : `${activePersona.prompt}\n\nOriginal: "${bit.content}"\nUser feedback: "${currentInput}"\nRespond strictly with JSON: {"rewrittenContent":"...", "notes":"..."}`;
                     const payload = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" }, model: modelName };
-                    const response = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    const response = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-goog-api-key': apiKey } : {}) }, body: JSON.stringify(payload) });
                     const data = response.candidates[0].content.parts[0].text;
                     let parsedData; try { parsedData = JSON.parse(data); } catch (e) { parsedData = JSON.parse(data.replace(/```json/gi, '').replace(/```/g, '').trim()); }
                     const generatedDraft = parsedData.rewrittenContent || bit.content;
@@ -452,12 +542,10 @@
             };
 
             const renderFormattedText = (text) => {
-                const parts = text.split(/(\*\*[^*]+\*\*|__[^_]+__)/g);
-                return parts.map((part, i) => {
-                    if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) return <strong key={i} className="font-black text-white">{part.slice(2, -2)}</strong>;
-                    if (part.length > 4 && part.startsWith('__') && part.endsWith('__')) return <span key={i} className="underline underline-offset-4">{part.slice(2, -2)}</span>;
-                    return <span key={i}>{part}</span>;
-                });
+                const parts = text.split(/(==[^=]+==)/g);
+                return parts.map((part, i) => (part.length > 4 && part.startsWith('==') && part.endsWith('=='))
+                    ? <mark key={i} className="bg-orange-500/30 text-orange-300 font-bold rounded px-0.5">{part.slice(2, -2)}</mark>
+                    : <span key={i}>{part}</span>);
             };
 
             return (
@@ -502,6 +590,9 @@
                                                     <span key={t} className="bg-black/40 text-slate-300 px-2 py-1 md:px-3 md:py-1.5 rounded-lg text-xs md:text-sm font-bold border border-white/10 flex items-center gap-1 md:gap-2 shadow-inner">
                                                         #{t} <button onClick={() => onChange({...bit, tags: bit.tags.filter(x => x!==t)})} className="hover:text-red-400 hover:bg-white/10 rounded-md p-1 transition-all" title="Remove tag"><X size={12}/></button>
                                                     </span>
+                                                ))}
+                                                {suggestedTags.map(t => (
+                                                    <button key={t} onClick={() => commitEditorTag(t)} className="px-2 py-1 md:px-3 md:py-1.5 rounded-lg text-xs md:text-sm font-bold border border-dashed border-orange-500/40 text-orange-300 hover:bg-orange-500/20 transition-all flex items-center gap-1" title="Suggested from script - click to add"><Sparkles size={12}/> #{t} <Plus size={12}/></button>
                                                 ))}
                                                 <div className="relative w-full md:w-auto mt-2 md:mt-0">
                                                     <input 
@@ -548,8 +639,7 @@
                                     <div className="flex justify-between items-end mb-2 md:mb-4 shrink-0">
                                         <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Script</label>
                                         <div className="flex items-center gap-2 md:gap-3">
-                                            <button onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('**')} className="px-2.5 py-1 bg-black/40 border border-white/10 rounded-lg text-slate-300 font-black text-xs hover:bg-white/10 transition-colors" title="Bold (Ctrl+B)">B</button>
-                                            <button onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('__')} className="px-2.5 py-1 bg-black/40 border border-white/10 rounded-lg text-slate-300 underline font-bold text-xs hover:bg-white/10 transition-colors" title="Underline (Ctrl+U)">U</button>
+                                            <button onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('==')} className="px-2.5 py-1 bg-orange-500/20 border border-orange-500/40 rounded-lg text-orange-300 font-black text-xs hover:bg-orange-500/30 transition-colors flex items-center gap-1" title="Highlight selected text in orange (Ctrl+Shift+H)"><Highlighter size={12}/> Highlight</button>
                                             <label className="hidden md:flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-400 mx-2 tracking-widest uppercase hover:text-slate-200 transition-colors">
                                                 <input type="checkbox" checked={showFormatPreview} onChange={e => setShowFormatPreview(e.target.checked)} className="accent-orange-500 w-3.5 h-3.5"/> PREVIEW
                                             </label>
@@ -643,7 +733,7 @@
                     const bit = bits.find(b => b.id === id);
                     if (bit) {
                         text += `${index + 1}. ${bit.title} (${bit.duration} min)\n`;
-                        if (incScript) text += `   ${bit.content}\n`;
+                        if (incScript) text += `   ${bit.content.replace(/==/g, '')}\n`;
                         if (incNotes && bit.notes) text += `   Notes: ${bit.notes}\n`;
                         text += "\n";
                     }
@@ -853,11 +943,11 @@
                 const apiKey = geminiApiKey || ""; 
                 const modelName = apiKey ? "gemini-3.5-flash" : "gemini-2.5-flash-preview-09-2025";
                 try {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
                     const existingTitles = existingBits.map(b => b.title).join(", ");
                     const promptText = `You are a comedy writing assistant. Read the raw notes and separate them into distinct stand-up comedy bits. IMPORTANT: Avoid extracting bits that heavily match these existing titles to prevent duplicates: [${existingTitles}]. For each bit, generate a short title, clean up the content, extract obvious stage directions into 'notes', and determine relevant tags (e.g. 'Dating', 'Corporate'). ALSO: extract the exact string of the core "punchline" from the content into the punchlines array. IF a date is mentioned alongside the bit, extract it into a 'date' field (YYYY-MM-DD format). Respond ONLY with a JSON array: [{"title":"Str","content":"Str","notes":"Str","tags":["Str"], "punchlines":["exact content string"], "date":"YYYY-MM-DD"}]\nText: ${rawText}`;
                     const payload = { contents: [{ parts: [{ text: promptText }] }], generationConfig: { responseMimeType: "application/json" }, model: modelName };
-                    const response = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    const response = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-goog-api-key': apiKey } : {}) }, body: JSON.stringify(payload) });
                     let rawResponseText = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
                     rawResponseText = rawResponseText.replace(/```json/gi, '').replace(/```/g, '').trim();
                     let aiData; try { aiData = JSON.parse(rawResponseText); } catch (e) { aiData = JSON.parse(rawResponseText.replace(/```json/gi, '').replace(/```/g, '').trim()); }
@@ -1082,10 +1172,10 @@
                 try {
                     const availableBits = bits.filter(b => b.status !== 'Retired' && b.status !== 'Trashed').map(b => ({id: b.id, title: b.title, duration: b.duration, tags: b.tags}));
                     if (availableBits.length === 0) throw new Error("No active bits available in library to build a set.");
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
                     const promptText = `You are a master stand-up comedy showrunner. I need you to build a setlist. Target Duration: ${duration} minutes. Requested Vibe / Audience / Theme: ${vibe || "Any standard crowd"}. Target Language: ${language}. Here is my library of available bits: ${JSON.stringify(availableBits)}. Select a combination of bits that flows well, matches the vibe and Target Language (${language}), and whose combined duration is as close to ${duration} minutes as possible without going over by more than 2 minutes. Respond ONLY with a JSON object in this exact format: {"setName": "A catchy, relevant title for this set", "bitIds": ["id1", "id2", "id3"]}`;
                     const payload = { contents: [{ parts: [{ text: promptText }] }], generationConfig: { responseMimeType: "application/json" }, model: modelName };
-                    const response = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    const response = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-goog-api-key': apiKey } : {}) }, body: JSON.stringify(payload) });
                     const rawData = response.candidates[0].content.parts[0].text;
                     let parsedData; try { parsedData = JSON.parse(rawData); } catch (e) { parsedData = JSON.parse(rawData.replace(/```json/gi, '').replace(/```/g, '').trim()); }
                     if (!parsedData.bitIds || parsedData.bitIds.length === 0) throw new Error("AI could not find matching bits for this criteria.");
@@ -1227,8 +1317,13 @@
                     const dPersonas = JSON.parse(localStorage.getItem('gr_personas') || JSON.stringify(DEFAULT_PERSONAS));
                     const dSettings = JSON.parse(localStorage.getItem('gr_settings') || JSON.stringify({ tags: INITIAL_TAGS, activePersonaId: '1', geminiApiKey: '' }));
 
-                    setBits(dBits); setSets(dSets); setActiveSetId(dSets[0]?.id || 'default');
-                    setShows(dShows); setPersonas(dPersonas); setTags(dSettings.tags || INITIAL_TAGS);
+                    const merged = mergeSimilarTags(dSettings.tags || INITIAL_TAGS, dBits);
+                    if (merged.removed > 0 || merged.bits.some((b, i) => b !== dBits[i])) {
+                        localStorage.setItem('gr_bits', JSON.stringify(merged.bits));
+                        localStorage.setItem('gr_settings', JSON.stringify({ ...dSettings, tags: merged.tags }));
+                    }
+                    setBits(merged.bits); setSets(dSets); setActiveSetId(dSets[0]?.id || 'default');
+                    setShows(dShows); setPersonas(dPersonas); setTags(merged.tags);
                     setActivePersonaId(dSettings.activePersonaId || '1');
                     setGeminiApiKey(dSettings.geminiApiKey || '');
                 } catch(e) { console.error("Error loading local storage", e); } 
@@ -1430,10 +1525,19 @@
             };
 
             const handleAddTag = (newTag) => {
-                const cleanTag = newTag.replace(/^#/, '').trim();
+                const cleanTag = canonicalTag(newTag, tags);
                 if (cleanTag && !tags.includes(cleanTag)) {
                     saveSettings({ tags: [...tags, cleanTag], activePersonaId });
                 }
+            };
+
+            const handleMergeSimilarTags = () => {
+                const merged = mergeSimilarTags(tags, bits);
+                saveBits(merged.bits);
+                saveSettings({ tags: merged.tags, activePersonaId });
+                setSelectedTags(prev => mergeTagList(prev));
+                playSound('success');
+                alert(merged.removed > 0 ? `Merged similar tags: ${merged.removed} removed (${merged.tags.length} remain).` : "No similar tags found.");
             };
 
             const handleDeleteTag = (tagToDelete) => {
@@ -2383,6 +2487,7 @@
                                                 </button>
                                             )}
 
+                                            <button onClick={handleMergeSimilarTags} className="mb-4 w-full px-3 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest bg-black/40 border border-white/10 text-slate-300 hover:bg-orange-500/20 hover:text-orange-300 transition-all flex items-center justify-center gap-2 btn-press" title="Merge duplicate/similar tags (e.g. Eng + English)"><Sparkles size={14}/> Merge Similar Tags</button>
                                             <div className="flex flex-wrap gap-2 md:gap-2.5">
                                                 {tags.filter(t => t.toLowerCase().includes(tagSearchQuery.toLowerCase())).map(t => {
                                                     const isActive = editingBitFull ? editingBitFull.tags.includes(t) : selectedTags.includes(t);
